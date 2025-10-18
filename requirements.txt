@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pandas
+matplotlib
+seaborn
+scikit-learn
+python-multipart
+langchain
+openai
+langchain-google-genai
+statsmodels
+xgboost
+scipy
+joblib
+PyMuPDF
+faiss-cpu
+langchain_community
