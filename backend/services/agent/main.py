@@ -11,6 +11,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
 from backend.services.eda import main as eda_main
 from backend.services.ml import selector, preprocessor, trainer, evaluator,predictor
+from langchain.memory import ConversationBufferMemory
 import pandas as pd
 import joblib
 from backend.services.memory import memory_manager
@@ -27,9 +28,11 @@ class ToolPlan(BaseModel):
     tool_name: str = Field(description="Nama alat yang harus digunakan.")
     reasoning: str = Field(description="Alasan singkat pemilihan alat.")
     column_name: Optional[str] = Field(default=None, description="Nama kolom jika dibutuhkan.")
+    target_column: Optional[str] = Field(default=None, description="Nama kolom target jika dibutuhkan oleh tool.")
     columns_to_drop: Optional[List[str]] = Field(default=None, description="Daftar nama kolom yang akan dibuang sebelum pelatihan.")
     new_data: Optional[Dict] = Field(default=None, description="Data baru dalam format dictionary untuk prediksi.")
     model_name: Optional[str] = Field(default=None, description="Nama unik untuk menyimpan atau memuat model.")
+    baseline_model_name: Optional[str] = Field(default=None, description="Nama model baseline untuk perbandingan tuning.") #
     pdf_question: Optional[str] = Field(default=None, description="Pertanyaan spesifik yang akan diajukan ke dokumen PDF.")
 # Daftar tool yang diperbarui dan lebih lengkap
 AVAILABLE_TOOLS = [
@@ -52,11 +55,16 @@ AVAILABLE_TOOLS = [
     {"name": "answer_pdf_question", "description": "Gunakan ini untuk menjawab pertanyaan spesifik dari dokumen PDF yang telah diindeks sebelumnya. Butuh 'pdf_question'."}
 ]
 
-def get_agent_plan(user_prompt: str, column_list: list[str]) -> dict:
+def get_agent_plan(session_id: str,user_prompt: str, column_list: list[str]) -> dict:
     tools_as_string = "\n".join([f"- {tool['name']}: {tool['description']}" for tool in AVAILABLE_TOOLS])
     parser = JsonOutputParser(pydantic_object=ToolPlan)
     prompt_template = ChatPromptTemplate.from_template(
         """Anda adalah AI data analyst. Pilih alat yang paling tepat dari daftar berikut berdasarkan permintaan pengguna.
+
+        --- RIWAYAT PERCAKAPAN SEBELUMNYA ---
+        {chat_history}
+        --- AKHIR RIWAYAT ---
+
         {tools}
         PENTING: Semua nama kolom yang Anda pilih HARUS berasal dari daftar kolom yang valid berikut ini. Jangan menciptakan nama kolom baru.
         Daftar Kolom yang Valid: {columns}
@@ -149,16 +157,23 @@ def get_agent_plan(user_prompt: str, column_list: list[str]) -> dict:
     )
     chain = prompt_template | llm | parser
     try:
+        memory = memory_manager.get_or_create_memory(session_id)
+        # ----------------------------------
+
+        # Muat variabel memori
+        memory_variables = memory.load_memory_variables({})
+
         return chain.invoke({
             "tools": tools_as_string,
             "user_input": user_prompt,
             "columns": ", ".join(column_list),
             "format_instructions": parser.get_format_instructions(),
+            "chat_history": memory_variables.get("chat_history", [])
         })
     except Exception as e:
         return {"error": "Gagal membuat rencana.", "detail": str(e)}
 
-def get_interpretation(tool_name: str, tool_output, image_bytes: Optional[bytes] = None, baseline_metrics: Optional[dict] = None) -> str:
+def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes: Optional[bytes] = None) -> str:
     """Fungsi interpretasi universal untuk data dan gambar."""
     if image_bytes:
         # Logika Multimodal untuk Gambar
@@ -174,6 +189,12 @@ def get_interpretation(tool_name: str, tool_output, image_bytes: Optional[bytes]
         output_str = json.dumps(tool_output, indent=2)
 
         baseline_str = json.dumps(baseline_metrics, indent=2) if baseline_metrics else "Tidak ada data baseline."
+
+        if tool_name == "run_tuned_ml_pipeline":
+             baseline_name = tool_output.get("plan", {}).get("baseline_model_name") # Ambil dari rencana
+             baseline_metrics = memory_manager.get_model_metrics(baseline_name) # Ambil dari memori
+             if baseline_metrics:
+                 baseline_str = json.dumps(baseline_metrics, indent=2, default=str)
         
         # Template prompt spesifik untuk setiap tool data
         prompt_templates = {
@@ -217,7 +238,48 @@ def get_interpretation(tool_name: str, tool_output, image_bytes: Optional[bytes]
         chain = prompt | llm
         return chain.invoke({"data": output_str, "baseline_data": baseline_str}).content
 
-def execute_tool(plan: dict, file_contents: Optional[bytes]):
+def run_agent_flow(session_id: str, prompt: str, file_contents: Optional[bytes], dataset_name: Optional[str]):
+    """
+    Fungsi master yang mengelola seluruh alur agen, kini dengan memori.
+    """
+    column_list = []
+    # (Logika memuat kolom dari memori bisa ditambahkan nanti jika diperlukan)
+    if file_contents and dataset_name and dataset_name.endswith('.csv'):
+         df = eda_main._read_csv_with_fallback(file_contents)
+         if df is not None:
+             column_list = df.columns.tolist()
+
+    # 1. Buat Rencana (menggunakan session_id untuk mendapatkan memori)
+    #    Fungsi get_agent_plan sekarang menerima session_id
+    plan = get_agent_plan(session_id, prompt, column_list)
+    if "error" in plan:
+        return plan
+
+    # 2. Eksekusi Tool
+    #    Fungsi execute_tool juga perlu session_id (misal untuk RAG)
+    result = execute_tool(session_id, plan, file_contents)
+
+    # --- SIMPAN INTERAKSI KE MEMORI ---
+    if "error" not in result:
+        # Ambil ringkasan dari hasil, atau gunakan pesan default
+        # Pastikan ada output yang disimpan, terutama untuk tool seperti index_pdf
+        agent_response = result.get("summary")
+        if agent_response: # Hanya simpan jika ada ringkasan/jawaban
+            # Dapatkan objek memori lagi dari manajer
+            memory = memory_manager.get_or_create_memory(session_id)
+            # Format input/output untuk disimpan
+            inputs = {"input": prompt}
+            outputs = {"output": agent_response}
+            # Simpan ke memori menggunakan save_context
+            memory.save_context(inputs, outputs)
+            print(f"--- Konteks disimpan ke memori sesi {session_id} ---")
+        else:
+             print(f"--- Tidak ada output summary untuk disimpan ke memori sesi {session_id} ---")
+    # ------------------------------------
+
+    return result
+
+def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
     """
     Fungsi master tunggal untuk mengeksekusi semua tool, baik visual maupun data.
     """
@@ -332,15 +394,10 @@ def execute_tool(plan: dict, file_contents: Optional[bytes]):
             })
 
             # --- MODIFIKASI: Gunakan Manajer Memori ---
-            memory_manager.save_model_metrics(save_name, raw_data)
+            memory_manager.save_model_metrics(session_id, save_name, raw_data)
             # -----------------------------------------
             
-            # Ambil data baseline untuk interpreter
-            baseline_data = memory_manager.get_model_metrics(baseline_model_name)
 
-            # Panggil interpreter dengan data baseline
-            summary = get_interpretation(tool_to_use, raw_data, baseline_metrics=baseline_data)
-            return {"plan": plan, "summary": summary, "data": raw_data}
         
         elif tool_to_use == "get_feature_importance":
             if not model_name: return {"error": "Anda perlu menyebutkan nama model yang ingin dianalisis."}
@@ -397,7 +454,7 @@ def execute_tool(plan: dict, file_contents: Optional[bytes]):
 
     # Jika tool visual berhasil, kembalikan gambar
     if image_bytes:
-        summary = get_interpretation(tool_to_use, None, image_bytes=image_bytes)
+        summary = get_interpretation(session_id,tool_to_use, plan, image_bytes=image_bytes)
         image_b64 = base64.b64encode(image_bytes).decode("utf-8")
         return {
             "plan": plan, "summary": summary,
@@ -406,8 +463,16 @@ def execute_tool(plan: dict, file_contents: Optional[bytes]):
 
     # Jika tool data berhasil, kembalikan data
     if raw_data is not None:
-        summary = get_interpretation(tool_to_use, raw_data)
+        baseline_metrics_data = None
+        if tool_to_use == "run_tuned_ml_pipeline":
+             # Gunakan nama baseline dari plan
+             baseline_name = plan.get("baseline_model_name")
+             baseline_metrics_data = memory_manager.get_model_metrics(session_id, baseline_name) # Ambil per sesi
+        summary = get_interpretation(session_id, tool_to_use, raw_data, baseline_metrics=baseline_metrics_data)
         return {"plan": plan, "summary": summary, "data": raw_data}
+
+    if tool_to_use in visual_tools or tool_to_use in data_tools_eda or tool_to_use in data_tools_ml:
+        return {"error": f"Gagal mengeksekusi '{tool_to_use}' karena hasil kosong."}
         
     # Fallback jika terjadi kesalahan logika
     return {"error": f"Gagal mengeksekusi '{tool_to_use}' karena hasil kosong."}
