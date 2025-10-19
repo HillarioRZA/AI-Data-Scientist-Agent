@@ -1,3 +1,4 @@
+# File: backend/services/agemt/main.py
 import os
 import json
 import base64
@@ -11,10 +12,10 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
 from backend.services.eda import main as eda_main
 from backend.services.ml import selector, preprocessor, trainer, evaluator,predictor
-from langchain.memory import ConversationBufferMemory
 import pandas as pd
 import joblib
 from backend.services.memory import memory_manager
+from backend.services.memory import persistent_memory
 from backend.services.rag import parser as rag_parser
 from backend.services.rag import vectorizer as rag_vectorizer
 from backend.services.rag import retriever as rag_retriever
@@ -22,7 +23,6 @@ load_dotenv()
 
 
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
-model_artifacts = {"model": None, "preprocessor": None, "problem_type": None}
 
 class ToolPlan(BaseModel):
     tool_name: str = Field(description="Nama alat yang harus digunakan.")
@@ -52,7 +52,8 @@ AVAILABLE_TOOLS = [
     {"name": "get_feature_importance", "description": "Untuk mengetahui fitur apa yang paling penting dari model yang sudah dilatih."},
     {"name": "predict_new_data", "description": "Gunakan setelah model dilatih untuk memprediksi hasil dari satu data baru."},
     {"name": "index_pdf", "description": "Gunakan ini satu kali saat pengguna mengunggah file PDF. Ini akan membaca dan mengindeks dokumen agar siap ditanyai."},
-    {"name": "answer_pdf_question", "description": "Gunakan ini untuk menjawab pertanyaan spesifik dari dokumen PDF yang telah diindeks sebelumnya. Butuh 'pdf_question'."}
+    {"name": "answer_pdf_question", "description": "Gunakan ini untuk menjawab pertanyaan spesifik dari dokumen PDF yang telah diindeks sebelumnya. Butuh 'pdf_question'."},
+    {"name": "conversational_recall", "description": "Gunakan ini untuk menjawab pertanyaan kontekstual sederhana yang jawabannya dapat ditemukan di riwayat chat atau memori sesi. JANGAN gunakan tool ini untuk pertanyaan yang memerlukan perhitungan data baru atau tool ML/EDA."}
 ]
 
 def get_agent_plan(session_id: str,user_prompt: str, column_list: list[str]) -> dict:
@@ -192,7 +193,7 @@ def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes:
 
         if tool_name == "run_tuned_ml_pipeline":
              baseline_name = tool_output.get("plan", {}).get("baseline_model_name") # Ambil dari rencana
-             baseline_metrics = memory_manager.get_model_data(session_id,baseline_name) # Ambil dari memori
+             baseline_metrics = persistent_memory.get_model_data(session_id,baseline_name) # Ambil dari memori
              if baseline_metrics:
                  baseline_str = json.dumps(baseline_metrics, indent=2, default=str)
         
@@ -238,48 +239,84 @@ def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes:
         chain = prompt | llm
         return chain.invoke({"data": output_str, "baseline_data": baseline_str}).content
 
-def run_agent_flow(session_id: str, prompt: str, file_contents: Optional[bytes], dataset_name: Optional[str]):
+def run_agent_flow(session_id: str, prompt: str, new_file_path: Optional[str], new_dataset_name: Optional[str]):
     """
-    Fungsi master yang mengelola seluruh alur agen, kini dengan memori.
+    Fungsi master yang mengelola seluruh alur agen.
+    Sekarang menerima path file, bukan konten, dan berinteraksi dengan LTM.
     """
     column_list = []
-    # (Logika memuat kolom dari memori bisa ditambahkan nanti jika diperlukan)
-    if file_contents and dataset_name and dataset_name.endswith('.csv'):
-         df = eda_main._read_csv_with_fallback(file_contents)
-         if df is not None:
-             column_list = df.columns.tolist()
+    file_path_to_use = new_file_path # Default ke file baru
+    file_type = None
 
-    # 1. Buat Rencana (menggunakan session_id untuk mendapatkan memori)
-    #    Fungsi get_agent_plan sekarang menerima session_id
+    # --- LOGIKA BARU: Muat kolom dari file yang baru diunggah ATAU dari LTM ---
+    if new_file_path and new_dataset_name:
+        if new_dataset_name.endswith('.csv'):
+            file_type = 'csv'
+            # Coba baca file baru untuk mendapatkan kolom
+            try:
+                with open(new_file_path, 'rb') as f:
+                    contents = f.read()
+                df = eda_main._read_csv_with_fallback(contents)
+                if df is not None:
+                    column_list = df.columns.tolist()
+                # Simpan path file CSV baru ini ke LTM sebagai "terakhir digunakan"
+                persistent_memory.save_dataset_path(session_id, "__latest_csv", new_file_path)
+            except Exception as e:
+                print(f"Gagal membaca file CSV baru untuk kolom: {e}")
+        
+        elif new_dataset_name.endswith('.pdf'):
+            file_type = 'pdf'
+            # Simpan path file PDF baru ini ke LTM
+            persistent_memory.save_dataset_path(session_id, "__latest_pdf", new_file_path)
+
+    elif not new_file_path: # Tidak ada file baru, coba muat CSV persisten dari LTM
+        dataset_info = persistent_memory.get_dataset_path(session_id, "__latest_csv")
+        if dataset_info and os.path.exists(dataset_info['path']):
+            try:
+                file_path_to_use = dataset_info['path'] # Set path yang akan digunakan
+                file_type = 'csv'
+                with open(file_path_to_use, 'rb') as f:
+                    csv_contents_bytes = f.read()
+                df = eda_main._read_csv_with_fallback(csv_contents_bytes)
+                if df is not None:
+                    column_list = df.columns.tolist()
+            except Exception as e:
+                print(f"Gagal memuat kolom dari file CSV di LTM: {e}")
+    # --------------------------------------------------------------------------------
+
+    # 1. Buat Rencana
+    #    Panggilan ini tidak berubah, krn get_agent_plan memanggil STM,
+    #    dan STM (yg sdh dimodifikasi) akan memanggil LTM.
     plan = get_agent_plan(session_id, prompt, column_list)
     if "error" in plan:
         return plan
 
     # 2. Eksekusi Tool
-    #    Fungsi execute_tool juga perlu session_id (misal untuk RAG)
-    result = execute_tool(session_id, plan, file_contents)
+    #    Kirim path file yang relevan (bisa baru atau lama)
+    result = execute_tool(session_id, plan, file_path_to_use,prompt)
 
     # --- SIMPAN INTERAKSI KE MEMORI ---
     if "error" not in result:
-        # Ambil ringkasan dari hasil, atau gunakan pesan default
-        # Pastikan ada output yang disimpan, terutama untuk tool seperti index_pdf
         agent_response = result.get("summary")
-        if agent_response: # Hanya simpan jika ada ringkasan/jawaban
-            # Dapatkan objek memori lagi dari manajer
-            memory = memory_manager.get_or_create_memory(session_id)
-            # Format input/output untuk disimpan
+        if agent_response:
+            # Ambil objek memori STM (yang mungkin sudah di-load dari LTM)
+            memory_stm = memory_manager.get_or_create_memory(session_id)
             inputs = {"input": prompt}
             outputs = {"output": agent_response}
-            # Simpan ke memori menggunakan save_context
-            memory.save_context(inputs, outputs)
-            print(f"--- Konteks disimpan ke memori sesi {session_id} ---")
+            # Simpan konteks ke objek memori STM (cache)
+            memory_stm.save_context(inputs, outputs)
+            print(f"--- [STM] Konteks disimpan ke cache memori sesi {session_id} ---")
+            
+            # --- PERUBAHAN: Simpan juga ke LTM (Database) ---
+            persistent_memory.save_chat_history(session_id, memory_stm)
+            # ------------------------------------------------
         else:
              print(f"--- Tidak ada output summary untuk disimpan ke memori sesi {session_id} ---")
     # ------------------------------------
 
     return result
 
-def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
+def execute_tool(session_id: str,plan: dict,file_path: Optional[str],original_prompt: str):
     """
     Fungsi master tunggal untuk mengeksekusi semua tool, baik visual maupun data.
     """
@@ -302,25 +339,74 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
     data_tools_eda = ["describe", "skewness", "outliers", "full-profile", "vif", "analyze_target", "categorical_insights"]
     data_tools_ml = ["run_ml_pipeline", "run_tuned_ml_pipeline", "get_feature_importance"]
     data_tools_rag = ["index_pdf", "answer_pdf_question"]
+    tools_need_file = visual_tools + data_tools_eda + ["run_ml_pipeline", "run_tuned_ml_pipeline", "index_pdf"]
+
+    file_path_to_use = file_path
+    file_contents = None
+
+    # --- LOGIKA BARU: Memuat path file dari LTM jika tidak ada file baru ---
+    if file_path_to_use is None and tool_to_use in tools_need_file:
+        file_key_to_load = "__latest_pdf" if tool_to_use == "index_pdf" else "__latest_csv"
+        
+        dataset_info = persistent_memory.get_dataset_path(session_id, file_key_to_load)
+        
+        if dataset_info and os.path.exists(dataset_info['path']):
+            file_path_to_use = dataset_info['path']
+            print(f"--- [LTM] Memuat file tersimpan '{file_path_to_use}' untuk tool '{tool_to_use}' ---")
+        else:
+             return {"error": f"Tool '{tool_to_use}' membutuhkan file CSV/PDF, tapi tidak ada file yang diunggah atau tersimpan di LTM untuk sesi ini."}
+    
+    # --- LOGIKA BARU: Baca konten file dari path SEBELUM memanggil tool ---
+    if file_path_to_use:
+        try:
+            with open(file_path_to_use, 'rb') as f:
+                file_contents = f.read()
+        except Exception as e:
+            return {"error": f"Gagal membaca file di path: {file_path_to_use}", "detail": str(e)}
+    # ----------------------------------------------------------------------
 
     if tool_to_use == "predict_new_data":
         if not model_name: return {"error": "Anda perlu menyebutkan nama model yang ingin digunakan."}
         if not new_data: return {"error": "Tidak ada data baru yang diberikan."}
         
-        model_data = memory_manager.get_model_data(session_id, model_name)
+        model_data = persistent_memory.get_model_data(session_id, model_name)
         if not model_data:
              return {"error": f"Model dengan nama '{model_name}' tidak ditemukan untuk sesi ini."}
 
         try:
-            model = joblib.load(f"saved_models/{model_name}_model.joblib")
-            preprocessor_obj = joblib.load(f"saved_models/{model_name}_preprocessor.joblib")
+            if not os.path.exists(model_data["model_path"]) or not os.path.exists(model_data["preprocessor_path"]):
+                return {"error": f"File model atau preprocessor untuk '{model_name}' (path: {model_data['model_path']}) tidak ditemukan di disk."}
+            
+            model = joblib.load(model_data["model_path"])
+            preprocessor_obj = joblib.load(model_data["preprocessor_path"])
         except FileNotFoundError:
             return {"error": f"Model dengan nama '{model_name}' tidak ditemukan."}
 
         raw_data = predictor.predict_new_data(new_data, model, preprocessor_obj)
         
         return {"plan": plan, "summary": f"Prediksi menggunakan model '{model_name}' adalah: {raw_data.get('prediction')}", "data": raw_data}
+    elif tool_to_use == "conversational_recall":
+        # 1. Ambil objek memori STM
+        memory_stm = memory_manager.get_or_create_memory(session_id)
+        
+        # 2. Dapatkan riwayat chat dari STM
+        chat_history_str = memory_stm.load_memory_variables({})['chat_history']
+        
+        # 3. Prompt LLM murni untuk menjawab
+        full_prompt = f"""Anda adalah AI asisten yang sangat cerdas. Jawab pertanyaan pengguna HANYA berdasarkan RIWAYAT CHAT di bawah ini dan konteks umum yang Anda ketahui tentang sesi ini. Jawab dengan ringkas dan langsung, tanpa format JSON.
+        
+        RIWAYAT CHAT: {chat_history_str}
+        
+        PERMINTAAN PENGGUNA: {original_prompt}
+        
+        JAWABAN:"""
 
+        try:
+            answer = llm.invoke(full_prompt).content
+            # Langsung kembalikan summary (answer)
+            return {"plan": plan, "summary": answer, "data": {"type": "conversational_answer"}}
+        except Exception as e:
+            return {"error": "Gagal menghasilkan jawaban percakapan.", "detail": str(e)}
     # Inisialisasi untuk tool lain
     raw_data = None
     image_bytes = None    
@@ -384,10 +470,11 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
             )
             raw_metrics = evaluator.evaluate_model(model, X_test, y_test, problem_type)
             save_name = model_name if model_name else f"model_{session_id}_terakhir"
+
             session_model_dir = f"saved_models/{session_id}"
             os.makedirs(session_model_dir, exist_ok=True) # Buat folder sesi jika belum ada
-            model_path = f"{session_model_dir}/{save_name}_model.joblib"
-            preprocessor_path = f"{session_model_dir}/{save_name}_preprocessor.joblib"
+            model_path = os.path.join(session_model_dir, f"{save_name}_model.joblib")
+            preprocessor_path = os.path.join(session_model_dir, f"{save_name}_preprocessor.joblib")
 
             joblib.dump(model, model_path)
             joblib.dump(pipeline_object, preprocessor_path)
@@ -403,7 +490,7 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
             })
 
             # --- MODIFIKASI: Gunakan Manajer Memori ---
-            memory_manager.save_model_data(session_id, save_name, raw_metrics, model_path, preprocessor_path)
+            persistent_memory.save_model_data(session_id, save_name, raw_metrics, model_path, preprocessor_path)
             # -----------------------------------------
             
 
@@ -411,11 +498,13 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
         elif tool_to_use == "get_feature_importance":
             if not model_name: return {"error": "Anda perlu menyebutkan nama model yang ingin dianalisis."}
 
-            model_data = memory_manager.get_model_data(session_id, model_name)
+            model_data = persistent_memory.get_model_data(session_id, model_name)
             if not model_data:
                 return {"error": f"Model dengan nama '{model_name}' tidak ditemukan untuk sesi ini."}
 
             try:
+                if not os.path.exists(model_data["model_path"]) or not os.path.exists(model_data["preprocessor_path"]):
+                    return {"error": f"File model atau preprocessor untuk '{model_name}' (path: {model_data['model_path']}) tidak ditemukan di disk."}
                 model = joblib.load(model_data["model_path"])
                 preprocessor_obj = joblib.load(model_data["preprocessor_path"])
             except FileNotFoundError:
@@ -478,7 +567,7 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
         if tool_to_use == "run_tuned_ml_pipeline":
              # Gunakan nama baseline dari plan
              baseline_name = plan.get("baseline_model_name")
-             baseline_model_info = memory_manager.get_model_data(session_id, baseline_name)
+             baseline_model_info = persistent_memory.get_model_data(session_id, baseline_name)
              if baseline_model_info:
                  baseline_metrics_data = baseline_model_info.get("metrics")
         summary = get_interpretation(session_id, tool_to_use, raw_data, baseline_metrics=baseline_metrics_data)
