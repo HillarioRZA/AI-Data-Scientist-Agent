@@ -173,7 +173,7 @@ def get_agent_plan(session_id: str,user_prompt: str, column_list: list[str]) -> 
     except Exception as e:
         return {"error": "Gagal membuat rencana.", "detail": str(e)}
 
-def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes: Optional[bytes] = None) -> str:
+def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes: Optional[bytes] = None, baseline_metrics: Optional[dict] = None) -> str:
     """Fungsi interpretasi universal untuk data dan gambar."""
     if image_bytes:
         # Logika Multimodal untuk Gambar
@@ -501,3 +501,4 @@ def get_plot_plan(user_prompt: str) -> dict:
         })
     except Exception as e:
         return {"error": "Gagal mengekstrak parameter plot.", "detail": str(e)}
+
