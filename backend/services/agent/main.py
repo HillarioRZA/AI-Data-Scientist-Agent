@@ -173,7 +173,7 @@ def get_agent_plan(session_id: str,user_prompt: str, column_list: list[str]) -> 
     except Exception as e:
         return {"error": "Gagal membuat rencana.", "detail": str(e)}
 
-def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes: Optional[bytes] = None, baseline_metrics: Optional[dict] = None) -> str:
+def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes: Optional[bytes] = None,  baseline_metrics: Optional[dict] = None) -> str:
     """Fungsi interpretasi universal untuk data dan gambar."""
     if image_bytes:
         # Logika Multimodal untuk Gambar
@@ -192,7 +192,7 @@ def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes:
 
         if tool_name == "run_tuned_ml_pipeline":
              baseline_name = tool_output.get("plan", {}).get("baseline_model_name") # Ambil dari rencana
-             baseline_metrics = memory_manager.get_model_metrics(session_id,baseline_name) # Ambil dari memori
+             baseline_metrics = memory_manager.get_model_data(session_id,baseline_name) # Ambil dari memori
              if baseline_metrics:
                  baseline_str = json.dumps(baseline_metrics, indent=2, default=str)
         
@@ -307,6 +307,10 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
         if not model_name: return {"error": "Anda perlu menyebutkan nama model yang ingin digunakan."}
         if not new_data: return {"error": "Tidak ada data baru yang diberikan."}
         
+        model_data = memory_manager.get_model_data(session_id, model_name)
+        if not model_data:
+             return {"error": f"Model dengan nama '{model_name}' tidak ditemukan untuk sesi ini."}
+
         try:
             model = joblib.load(f"saved_models/{model_name}_model.joblib")
             preprocessor_obj = joblib.load(f"saved_models/{model_name}_preprocessor.joblib")
@@ -378,32 +382,42 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
             model, X_test, y_test, type_model, best_params = trainer.train_model(
                 X_processed, y, problem_type, perform_tuning=perform_tuning
             )
-            raw_data = evaluator.evaluate_model(model, X_test, y_test, problem_type)
+            raw_metrics = evaluator.evaluate_model(model, X_test, y_test, problem_type)
+            save_name = model_name if model_name else f"model_{session_id}_terakhir"
+            session_model_dir = f"saved_models/{session_id}"
+            os.makedirs(session_model_dir, exist_ok=True) # Buat folder sesi jika belum ada
+            model_path = f"{session_model_dir}/{save_name}_model.joblib"
+            preprocessor_path = f"{session_model_dir}/{save_name}_preprocessor.joblib"
 
-            save_name = model_name if model_name else "model_terakhir"
-            model_path = f"saved_models/{save_name}_model.joblib"
-            preprocessor_path = f"saved_models/{save_name}_preprocessor.joblib"
             joblib.dump(model, model_path)
             joblib.dump(pipeline_object, preprocessor_path)
 
+            raw_data = raw_metrics.copy()
             raw_data.update({
                 "problem_type": problem_type,
                 "model_name": type_model,
                 "best_params": best_params,
-                "saved_model_name": save_name
+                "saved_model_name": save_name,
+                "model_path": model_path, # <-- Sertakan path
+                "preprocessor_path": preprocessor_path # <-- Sertakan path
             })
 
             # --- MODIFIKASI: Gunakan Manajer Memori ---
-            memory_manager.save_model_metrics(session_id, save_name, raw_data)
+            memory_manager.save_model_data(session_id, save_name, raw_metrics, model_path, preprocessor_path)
             # -----------------------------------------
             
 
         
         elif tool_to_use == "get_feature_importance":
             if not model_name: return {"error": "Anda perlu menyebutkan nama model yang ingin dianalisis."}
+
+            model_data = memory_manager.get_model_data(session_id, model_name)
+            if not model_data:
+                return {"error": f"Model dengan nama '{model_name}' tidak ditemukan untuk sesi ini."}
+
             try:
-                model = joblib.load(f"saved_models/{model_name}_model.joblib")
-                preprocessor_obj = joblib.load(f"saved_models/{model_name}_preprocessor.joblib")
+                model = joblib.load(model_data["model_path"])
+                preprocessor_obj = joblib.load(model_data["preprocessor_path"])
             except FileNotFoundError:
                 return {"error": f"Model dengan nama '{model_name}' tidak ditemukan."}
             
@@ -416,9 +430,6 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
             
             text_content = rag_parser.parse_pdf(file_contents)
 
-            print("--- Teks yang Diekstrak dari PDF ---")
-            print(text_content[:2000]) # Cetak 2000 karakter pertama
-            print("------------------------------------")
             
             if isinstance(text_content, str) and text_content.startswith("Error:"):
                 return {"error": "Gagal mem-parsing PDF.", "detail": text_content}
@@ -427,7 +438,7 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
             if isinstance(vector_store, str) and vector_store.startswith("Error:"):
                  return {"error": "Gagal membuat vector store.", "detail": vector_store}
             
-            memory_manager.save_vector_store(vector_store)
+            memory_manager.save_vector_store(session_id,vector_store)
             
             # Khusus untuk index_pdf, tidak ada data/summary interpretasi
             return {"plan": plan, "summary": "Dokumen PDF berhasil diindeks dan siap untuk ditanyai.", "data": None}
@@ -436,7 +447,7 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
             if not pdf_question:
                 return {"error": "Tidak ada pertanyaan yang diberikan untuk PDF."}
             
-            vector_store = memory_manager.get_vector_store()
+            vector_store = memory_manager.get_vector_store(session_id)
             if not vector_store:
                 return {"error": "PDF belum diindeks. Silakan unggah dan indeks PDF terlebih dahulu."}
             
@@ -467,7 +478,9 @@ def execute_tool(session_id: str,plan: dict, file_contents: Optional[bytes]):
         if tool_to_use == "run_tuned_ml_pipeline":
              # Gunakan nama baseline dari plan
              baseline_name = plan.get("baseline_model_name")
-             baseline_metrics_data = memory_manager.get_model_metrics(session_id, baseline_name) # Ambil per sesi
+             baseline_model_info = memory_manager.get_model_data(session_id, baseline_name)
+             if baseline_model_info:
+                 baseline_metrics_data = baseline_model_info.get("metrics")
         summary = get_interpretation(session_id, tool_to_use, raw_data, baseline_metrics=baseline_metrics_data)
         return {"plan": plan, "summary": summary, "data": raw_data}
 
@@ -501,5 +514,3 @@ def get_plot_plan(user_prompt: str) -> dict:
         })
     except Exception as e:
         return {"error": "Gagal mengekstrak parameter plot.", "detail": str(e)}
-
-
