@@ -17,32 +17,35 @@ def _get_session_data(session_id: str) -> Dict[str, Any]:
     """Mendapatkan atau membuat dictionary data untuk session_id tertentu."""
     if session_id not in _session_memory:
         _session_memory[session_id] = {
-            "model_metrics": {},
+            "model_registry": {},
             "active_vector_store": None,
             "chat_memory": None # Akan dibuat saat get_or_create_memory dipanggil
         }
     return _session_memory[session_id]
 
 # --- Fungsi untuk Metrik Model (Per Sesi) ---
-def save_model_metrics(session_id: str, model_name: str, metrics: dict):
+def save_model_data(session_id: str, model_name: str, metrics: dict, model_path: str, preprocessor_path: str):
     """Menyimpan atau memperbarui metrik model untuk sesi dan nama model tertentu."""
     session_data = _get_session_data(session_id)
     if model_name:
-        session_data["model_metrics"][model_name] = metrics
-        print(f"--- Metrik Model untuk sesi {session_id} diperbarui ---")
-        # print(session_data["model_metrics"]) # Debugging jika perlu
+        session_data["model_registry"][model_name] = { # <-- Diubah dari model_metrics
+            "metrics": metrics,
+            "model_path": model_path,
+            "preprocessor_path": preprocessor_path
+        }
+        print(f"--- Data Model untuk sesi {session_id}, model '{model_name}' diperbarui ---")
 
-def get_model_metrics(session_id: str, model_name: str) -> dict | None:
+def get_model_data(session_id: str, model_name: str) -> dict | None:
     """Mengambil metrik model yang tersimpan untuk sesi dan nama model tertentu."""
     session_data = _get_session_data(session_id)
     if model_name:
-        return session_data["model_metrics"].get(model_name)
+        return session_data["model_registry"].get(model_name)
     return None
 
-def clear_all_metrics_for_session(session_id: str):
+def clear_all_model_data_for_session(session_id: str):
     """Menghapus semua metrik model HANYA untuk sesi ini."""
     if session_id in _session_memory:
-        _session_memory[session_id]["model_metrics"] = {}
+        _session_memory[session_id]["model_registry"] = {}
         print(f"--- Metrik Model untuk sesi {session_id} dihapus ---")
 
 # --- Fungsi untuk Vector Store (Per Sesi) ---
