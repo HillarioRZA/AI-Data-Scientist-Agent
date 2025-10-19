@@ -192,7 +192,7 @@ def get_interpretation(session_id: str,tool_name: str, tool_output, image_bytes:
 
         if tool_name == "run_tuned_ml_pipeline":
              baseline_name = tool_output.get("plan", {}).get("baseline_model_name") # Ambil dari rencana
-             baseline_metrics = memory_manager.get_model_metrics(baseline_name) # Ambil dari memori
+             baseline_metrics = memory_manager.get_model_metrics(session_id,baseline_name) # Ambil dari memori
              if baseline_metrics:
                  baseline_str = json.dumps(baseline_metrics, indent=2, default=str)
         
@@ -501,4 +501,5 @@ def get_plot_plan(user_prompt: str) -> dict:
         })
     except Exception as e:
         return {"error": "Gagal mengekstrak parameter plot.", "detail": str(e)}
+
 
