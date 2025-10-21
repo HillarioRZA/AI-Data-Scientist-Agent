@@ -25,9 +25,6 @@ async def describe_data(file: UploadFile = File(...)):
 
 @router.post("/correlation-heatmap", response_class=StreamingResponse)
 async def get_correlation_heatmap(file: UploadFile = File(...)):
-    """
-    Endpoint untuk menghasilkan gambar heatmap korelasi dari file CSV.
-    """
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Format file tidak valid. Harap unggah file CSV.")
     
@@ -62,9 +59,6 @@ async def get_histogram(
 
 @router.post("/missing-value-heatmap", response_class=StreamingResponse)
 async def get_missing_value_heatmap(file: UploadFile = File(...)):
-    """
-    Endpoint untuk menghasilkan heatmap visualisasi missing values.
-    """
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Format file tidak valid.")
     
@@ -80,9 +74,6 @@ async def find_outliers(
     file: UploadFile = File(...),
     column_name: str = Form(...)
 ):
-    """
-    Endpoint untuk mendeteksi outliers pada kolom tertentu.
-    """
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Format file tidak valid.")
 
@@ -100,9 +91,6 @@ async def find_outliers(
 
 @router.post("/skewness")
 async def calculate_skewness(file: UploadFile = File(...)):
-    """
-    Endpoint untuk menghitung skewness dari semua kolom numerik.
-    """
     if not file.filename.endswith('.csv'):
         raise HTTPException(status_code=400, detail="Format file tidak valid.")
     
@@ -118,9 +106,6 @@ async def get_categorical_analysis(
     file: UploadFile = File(...),
     column_name: str = Form(...)
 ):
-    """
-    Endpoint untuk mendapatkan insight dari kolom kategorikal.
-    """
     contents = await file.read()
     result = eda_main.get_categorical_insights(contents, column_name)
 
@@ -138,9 +123,6 @@ async def get_target_analysis(
     file: UploadFile = File(...),
     target_column: str = Form(...)
 ):
-    """
-    Endpoint untuk menganalisis variabel target.
-    """
     contents = await file.read()
     result = eda_main.analyze_target(contents, target_column)
 
@@ -157,9 +139,6 @@ async def get_target_feature_relationship_plot(
     target_column: str = Form(...),
     feature_column: str = Form(...)
 ):
-    """
-    Endpoint untuk memvisualisasikan hubungan antara fitur dan target.
-    """
     contents = await file.read()
     image_bytes = eda_main.generate_target_feature_plot(contents, target_column, feature_column)
 
@@ -172,9 +151,6 @@ async def get_target_feature_relationship_plot(
 
 @router.post("/full-profile")
 async def get_full_data_profile(file: UploadFile = File(...)):
-    """
-    Endpoint untuk menjalankan profiling data otomatis yang komprehensif.
-    """
     contents = await file.read()
     profile_data = eda_main.run_full_data_profile(contents)
     
@@ -185,9 +161,6 @@ async def get_full_data_profile(file: UploadFile = File(...)):
 
 @router.post("/vif")
 async def get_vif_analysis(file: UploadFile = File(...)):
-    """
-    Endpoint untuk menghitung Variance Inflation Factor (VIF).
-    """
     contents = await file.read()
     result = eda_main.calculate_vif(contents)
 

@@ -1,14 +1,11 @@
-# File: backend/services/rag/retriever.py
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
-# HAPUS import ChatGoogleGenerativeAI jika tidak diperlukan lagi di file ini
 
 def format_docs(docs):
     """Helper untuk menggabungkan konten dokumen relevan menjadi satu string."""
     return "\n\n".join(doc.page_content for doc in docs)
 
-# --- PERBAIKAN: Tambahkan 'llm_text' sebagai argumen ---
 def get_rag_answer(question: str, vector_store, llm_text):
     """
     Menjawab pertanyaan menggunakan alur kerja RAG.
@@ -35,9 +32,7 @@ def get_rag_answer(question: str, vector_store, llm_text):
             print(doc.page_content)
             print("-" * 20)
         print("-------------------------------------------------------------\n")
-        # ---------------------------
 
-        # Template prompt untuk RAG
         template = """Anda adalah asisten AI yang menjawab pertanyaan hanya berdasarkan konteks yang diberikan. 
         Jika Anda tidak tahu jawabannya dari konteks, katakan saja Anda tidak tahu. Jawab dengan ringkas.
 
@@ -49,15 +44,13 @@ def get_rag_answer(question: str, vector_store, llm_text):
         Jawaban:"""
         prompt = ChatPromptTemplate.from_template(template)
 
-        # Membangun RAG chain (menggunakan llm_text yang diteruskan)
         rag_chain = (
             {"context": retriever | format_docs, "question": RunnablePassthrough()}
             | prompt
-            | llm_text # <-- Menggunakan LLM dari argumen
+            | llm_text
             | StrOutputParser()
         )
 
-        # Menjalankan chain dan mendapatkan jawaban
         answer = rag_chain.invoke(question)
         
         return answer
