@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.responses import Response, JSONResponse
 from backend.services.eda import main as eda_main
 from backend.services.agent import main as agent_main
-from typing import Optional,List,Dict,Union
+from typing import Optional,List,Dict
 import uuid
 
 router = APIRouter(
@@ -17,7 +17,7 @@ router = APIRouter(
 
 @router.post("/execute")
 async def execute_agent_action(
-    file: Union[UploadFile] = File(None),
+    file: Optional[UploadFile] = File(None),
     prompt: str = Form(...),
     x_session_id: Optional[str] = Header(None, alias="X-Session-ID")
 ):
@@ -42,36 +42,32 @@ async def execute_agent_action(
     new_dataset_name: Optional[str] = None
     available_columns = []
 
-    if isinstance(file, UploadFile):
-        uploaded_file = file
-    elif isinstance(file, str) and file.strip() == "":
-        uploaded_file = None
-    else:
-        # Jika tipe tidak terduga, biarkan None
-        uploaded_file = None
-
-    if uploaded_file:
-        # 2. Validasi format
-        if not (uploaded_file.filename.endswith('.csv') or uploaded_file.filename.endswith('.pdf')):
-            raise HTTPException(status_code=400, detail="Format file tidak valid. Harap unggah file CSV atau PDF.")
+    if file and file.filename:
             
-        # 3. Tentukan path penyimpanan dan buat folder
-        session_upload_dir = os.path.join("user_uploads", session_id) 
-        os.makedirs(session_upload_dir, exist_ok=True)
-        
-        new_dataset_name = uploaded_file.filename
-        new_file_path = os.path.join(session_upload_dir, new_dataset_name)
+            # 1. Validasi format
+            if not (file.filename.endswith('.csv') or file.filename.endswith('.pdf')):
+                raise HTTPException(status_code=400, detail="Format file tidak valid. Harap unggah file CSV atau PDF.")
+                
+            # 2. Tentukan path penyimpanan dan buat folder
+            session_upload_dir = os.path.join("user_uploads", session_id) 
+            os.makedirs(session_upload_dir, exist_ok=True)
+            
+            new_dataset_name = file.filename
+            new_file_path = os.path.join(session_upload_dir, new_dataset_name)
 
-        # 4. Simpan file fisik ke disk
-        try:
-            contents = await uploaded_file.read() 
-            with open(new_file_path, "wb") as f:
-                f.write(contents)
-            print(f"File disimpan ke: {new_file_path}")
-        except Exception as e:
-            if os.path.exists(new_file_path):
-                 os.remove(new_file_path)
-            raise HTTPException(status_code=500, detail=f"Gagal menyimpan file ke disk: {str(e)}")
+            # 3. Simpan file fisik ke disk
+            try:
+                # Baca file sekali saja
+                contents = await file.read() 
+                with open(new_file_path, "wb") as f:
+                    f.write(contents)
+                
+                # Log ini SEKARANG akan muncul jika file diunggah
+                print(f"File disimpan ke: {new_file_path}") 
+            except Exception as e:
+                if os.path.exists(new_file_path):
+                    os.remove(new_file_path)
+                raise HTTPException(status_code=500, detail=f"Gagal menyimpan file ke disk: {str(e)}")
 
 
             if not (new_dataset_name.endswith('.csv') or new_dataset_name.endswith('.pdf')):
