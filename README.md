@@ -1,5 +1,6 @@
 # Data Whisperer v1.0
 ## AI-Powered Data Analysis Platform
+> 💡 *An autonomous AI Data Scientist that analyzes your data, trains ML models, and answers questions — all through natural language.*
 
 ---
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
@@ -113,8 +114,7 @@
 
 ### Step 1: Clone Repository
 ```bash
-git clone https://github.com/your-username/data-whisperer.git
-cd data-whisperer
+git clone https://github.com/HillarioRZA/AI-Data-Scientist-Agent.git
 ```
 
 ### Step 2: Create Virtual Environment
@@ -235,20 +235,13 @@ GET  /ml/download-model             # Download model artifacts
 ---
 
 ## 🧠 Skills Demonstrated
-
-LLM Integration (OpenAI API)
-
-LangChain ReAct Reasoning
-
-Backend Architecture (FastAPI)
-
-Data Science Automation (EDA & ML)
-
-RAG Implementation (FAISS)
-
-Session & Memory Management
-
-Clean Modular Codebase Design
+- 🧩 **LLM Integration:** OpenAI API + LangChain
+- ⚙️ **Backend Architecture:** FastAPI modular service design
+- 📊 **Data Science Automation:** EDA + ML Pipelines (Scikit-learn)
+- 🧠 **Reasoning Agent Design:** ReAct pattern orchestration
+- 📄 **RAG Implementation:** FAISS vectorstore + PDF parsing
+- 💾 **Memory Management:** ConversationBufferMemory + TinyDB
+- 🧹 **Code Quality:** Type hints, error handling, modular code
 
 ---
 
@@ -262,11 +255,9 @@ Task	Output
 ---
 
 ## 🧑‍💻 About the Developer
-
-👋 Built by Reza Pratama
-
-> Informatics Student & AI Engineer Enthusiast
-Focused on AI Agents, LLM Integration, and Backend Automation.
+👋 Built by [**Reza Pratama**](https://github.com/HillarioRZA)  
+🎓 *Informatics Student & AI Engineer Enthusiast*  
+💡 Focused on **AI Agents**, **LLM Integration**, and **Backend Automation**.
 
 ---
 
@@ -277,21 +268,21 @@ MIT License © 2025 — Reza Pratama
 
 ---
 
-❤️ Acknowledgments
+## ❤️ Acknowledgments
 
-LangChain
+- LangChain
 
-FastAPI
+- FastAPI
 
-Scikit-learn
+- Scikit-learn
 
-Pandas
+- Pandas
 
-FAISS
+- FAISS
 
 ---
 
-💬 Data Whisperer v1.0 — Empowering AI-driven Data Analysis
+>💬 Data Whisperer v1.0 — Empowering AI-driven Data Analysis
 “An intelligent assistant that speaks the language of data.”
 
 ---
