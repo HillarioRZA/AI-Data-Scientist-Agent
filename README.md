@@ -1,7 +1,7 @@
 # Data Whisperer v1.0
-## AI-Powered Data Analysis Platform
-> 💡 *An autonomous AI Data Scientist that analyzes your data, trains ML models, and answers questions — all through natural language.*
+## AI-Powered Data Analysis Platform  
 
+> 💡 *An autonomous AI Data Scientist that analyzes your data, trains ML models, and answers questions — all through natural language.*
 ---
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104+-green.svg)](https://fastapi.tiangolo.com)
@@ -247,11 +247,11 @@ GET  /ml/download-model             # Download model artifacts
 
 ## 🧩 Example Output
 
-Task	Output
-
-- “Analyze churn data”	“83% churn pada pelanggan tenure < 2 tahun.”
-- “Visualize correlation”	Generates heatmap chart
-- “Summarize PDF report”	Extracts and summarizes sections automatically
+| Task | Output |
+|------|---------|
+| “Analyze churn data” | “83% churn pada pelanggan tenure < 2 tahun.” |
+| “Visualize correlation” | Generates heatmap chart |
+| “Summarize PDF report” | Extracts and summarizes sections automatically |
 ---
 
 ## 🧑‍💻 About the Developer
@@ -269,20 +269,15 @@ MIT License © 2025 — Reza Pratama
 ---
 
 ## ❤️ Acknowledgments
-
-- LangChain
-
-- FastAPI
-
-- Scikit-learn
-
-- Pandas
-
-- FAISS
+- [LangChain](https://python.langchain.com)
+- [FastAPI](https://fastapi.tiangolo.com)
+- [Scikit-learn](https://scikit-learn.org)
+- [Pandas](https://pandas.pydata.org)
+- [FAISS](https://github.com/facebookresearch/faiss)
 
 ---
 
->💬 Data Whisperer v1.0 — Empowering AI-driven Data Analysis
-“An intelligent assistant that speaks the language of data.”
+> 💬 **Data Whisperer v1.0 — Empowering AI-driven Data Analysis**  
+> *“An intelligent assistant that speaks the language of data.”*
 
 ---
